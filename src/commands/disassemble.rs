@@ -35,7 +35,7 @@ pub struct DisassembleArgs {
     )]
     pub raw: bool,
 
-    #[arg(short, long, help = "Emit asm file from the disassembled input")]
+    #[arg(short, long, help = "Emit the input program's disassembly to a file")]
     pub emit: bool,
 }
 
@@ -91,14 +91,23 @@ pub fn disassemble(args: DisassembleArgs) -> Result<(), Error> {
             .file_stem()
             .and_then(|name| name.to_str())
             .expect("we should have a file");
-        let content = render_asm(
+
+        let asm = render_asm(
             disassembled.value,
             entrypoint_offset,
             &text,
             format,
             args.raw,
-            true,
         )?;
+
+        let mut content = String::new();
+        content.push_str(&format!(
+            "# Generated with sbpf v{}\n# Generated on: {date}\n\n",
+            env!("CARGO_PKG_VERSION"),
+            date = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+        content.push_str(asm.as_str());
+
         fs::write(format!("{file_name}.s"), content)?;
     } else {
         print!(
@@ -109,7 +118,6 @@ pub fn disassemble(args: DisassembleArgs) -> Result<(), Error> {
                 &text,
                 format,
                 args.raw,
-                false
             )?
         );
     }
@@ -123,16 +131,8 @@ fn render_asm(
     text: &[u8],
     format: AsmFormat,
     raw: bool,
-    watermark: bool,
 ) -> Result<String, Error> {
     let mut output = String::new();
-
-    if watermark {
-        output.push_str(&format!(
-            "# Generated with sbpf v{}\n",
-            env!("CARGO_PKG_VERSION")
-        ));
-    }
 
     let print_error = |output: &mut String, indent: &str, e: &DisassemblerError| {
         if let DisassemblerError::BytecodeError { error, span } = e
@@ -297,15 +297,7 @@ mod tests {
             program.to_ixs()
         }
         .unwrap();
-        render_asm(
-            disassembled.value,
-            entrypoint_offset,
-            &text,
-            format,
-            raw,
-            false,
-        )
-        .unwrap()
+        render_asm(disassembled.value, entrypoint_offset, &text, format, raw).unwrap()
     }
 
     #[test]
