@@ -7,13 +7,18 @@ use {
         errors::DisassemblerError,
         program::{Disassembly, Program},
     },
-    std::{collections::HashSet, fs::File, io::Read},
+    std::{
+        collections::HashSet,
+        fs::{self, File},
+        io::Read,
+        path::PathBuf,
+    },
 };
 
 #[derive(Args)]
 pub struct DisassembleArgs {
     #[arg(help = "Path to the ELF file (.so) to disassemble")]
-    pub filename: String,
+    pub filepath: PathBuf,
     #[arg(short, long, help = "Output full JSON debug information")]
     pub debug: bool,
     #[arg(
@@ -29,10 +34,13 @@ pub struct DisassembleArgs {
         help = "Output raw instructions without labels or formatting"
     )]
     pub raw: bool,
+
+    #[arg(short, long, help = "Emit asm file from the disassembled input")]
+    pub emit: bool,
 }
 
 pub fn disassemble(args: DisassembleArgs) -> Result<(), Error> {
-    let mut file = File::open(&args.filename)?;
+    let mut file = File::open(&args.filepath)?;
     let mut b = vec![];
     file.read_to_end(&mut b)?;
 
@@ -77,16 +85,35 @@ pub fn disassemble(args: DisassembleArgs) -> Result<(), Error> {
 
     report(&disassembled.errors);
 
-    print!(
-        "{}",
-        render_asm(
+    if args.emit {
+        let file_name = args
+            .filepath
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .expect("we should have a file");
+        let content = render_asm(
             disassembled.value,
             entrypoint_offset,
             &text,
             format,
-            args.raw
-        )?
-    );
+            args.raw,
+            true,
+        )?;
+        fs::write(format!("{file_name}.s"), content)?;
+    } else {
+        print!(
+            "{}",
+            render_asm(
+                disassembled.value,
+                entrypoint_offset,
+                &text,
+                format,
+                args.raw,
+                false
+            )?
+        );
+    }
+
     Ok(())
 }
 
@@ -96,8 +123,16 @@ fn render_asm(
     text: &[u8],
     format: AsmFormat,
     raw: bool,
+    watermark: bool,
 ) -> Result<String, Error> {
     let mut output = String::new();
+
+    if watermark {
+        output.push_str(&format!(
+            "# Generated with sbpf v{}\n",
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
 
     let print_error = |output: &mut String, indent: &str, e: &DisassemblerError| {
         if let DisassemblerError::BytecodeError { error, span } = e
@@ -262,7 +297,15 @@ mod tests {
             program.to_ixs()
         }
         .unwrap();
-        render_asm(disassembled.value, entrypoint_offset, &text, format, raw).unwrap()
+        render_asm(
+            disassembled.value,
+            entrypoint_offset,
+            &text,
+            format,
+            raw,
+            false,
+        )
+        .unwrap()
     }
 
     #[test]
